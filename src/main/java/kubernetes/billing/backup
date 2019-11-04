@@ -1,0 +1,350 @@
+package kubernetes.billing;
+
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
+import com.amazonaws.auth.BasicSessionCredentials;
+import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
+import com.amazonaws.services.costexplorer.AWSCostExplorer;
+import com.amazonaws.services.costexplorer.AWSCostExplorerClientBuilder;
+import com.amazonaws.services.costexplorer.model.*;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenService;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClientBuilder;
+import com.amazonaws.services.securitytoken.model.AssumeRoleRequest;
+import com.amazonaws.services.securitytoken.model.Credentials;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+
+
+
+@Component
+public class AWSCostAndUsageAPI {
+
+    @Autowired
+    ConfigProperties configProp;
+
+    @Autowired
+    ResourceUsageAPI resourceUsageAPI;
+
+    public static void main(String[] args) {
+       // CEWithDimension();
+        //CEWithGroupDefinition();
+       // ViewBilling();
+
+        BigDecimal al = new BigDecimal(2147483648l).divide(new BigDecimal(32666730496l),2, RoundingMode.HALF_UP);
+        BigDecimal bl = new BigDecimal(2).divide(new BigDecimal(8),2, RoundingMode.HALF_UP);
+        System.out.println((bl.add(al))
+                .divide(new BigDecimal(2),
+                        2, RoundingMode.HALF_UP));
+       // new AWSCostAndUsageAPI().getCostData();
+    }
+
+    public void getTotalEC2CostForTheYear()
+    {
+//        ArrayList<Expression> list = new ArrayList<>();
+//        list.add(new Expression().
+//                withDimensions(new DimensionValues().withKey("SERVICE").withValues("Amazon Elastic Compute Cloud - Compute")));
+//        list.add(new Expression().withTags(new TagValues().withKey("alpha.eksctl.io/cluster-name").withValues("celegeneekscluster")));
+
+        final GetCostAndUsageRequest awsCERequest = new GetCostAndUsageRequest()
+                .withTimePeriod(new DateInterval().withStart("2019-08-01").withEnd("2019-09-01"))
+                .withGranularity(Granularity.MONTHLY)
+                .withMetrics("BlendedCost", "UsageQuantity")
+                //  .withFilter(new Expression().withAnd(list));
+                .withFilter(new Expression().withDimensions(new DimensionValues().withKey("SERVICE")
+//                        .withValues("Amazon Elastic Container Service for Kubernetes")));
+                        .  withValues("Amazon Elastic Compute Cloud - Compute")))
+                //    .withFilter(new Expression().withTags(new TagValues().withKey("alpha.eksctl.io/cluster-name").withValues("celegeneekscluster")));
+                //.withFilter(new Expression().withTags(new TagValues().withKey("alpha.eksctl.io/cluster-name").withValues("celegeneekscluster")));
+
+
+                .withGroupBy(new GroupDefinition().withType("TAG").withKey("alpha.eksctl.io/cluster-name"));
+
+        try {
+            AWSCostExplorer ce = AWSCostExplorerClientBuilder.standard()//.withCredentials(new DefaultAWSCredentialsProviderChain())
+                    .withCredentials(new CredentialsClient().getCredentials())
+                    .build();
+
+            GetCostAndUsageResult ceResult = ce.getCostAndUsage(awsCERequest);
+            ceResult.getResultsByTime().forEach(resultsByTime -> {
+                System.out.println(resultsByTime.toString());
+            });
+
+        } catch (final Exception e) {
+            System.out.println(e);
+        }
+    }
+
+    public Map<Integer, String> getTotalEKSCostData()
+    {
+
+        Map<Integer, ArrayList<String>> map = new Utils().getStartAndEndMonths(1);
+        Map<Integer, String> totaleksBillingData = new HashMap<>();
+        for(int k:  map.keySet())
+        {
+
+            final GetCostAndUsageRequest awsCERequest = new GetCostAndUsageRequest()
+                    .withTimePeriod(new DateInterval().withStart(map.get(k).get(0)).withEnd(map.get(k).get(1)))
+                    .withGranularity(Granularity.MONTHLY)
+                    .withMetrics("BlendedCost", "UsageQuantity")
+                    .withFilter(new Expression().withDimensions(new DimensionValues().withKey("SERVICE")
+                            .  withValues("Amazon Elastic Container Service for Kubernetes")))
+                    .withGroupBy(new GroupDefinition().withType("TAG").withKey("eks-name"));
+
+            try {
+                AWSCostExplorer ce = AWSCostExplorerClientBuilder.standard().withCredentials(new DefaultAWSCredentialsProviderChain())
+                        //.withCredentials(new CredentialsClient().getCredentials())
+                        .build();
+
+                GetCostAndUsageResult ceResult = ce.getCostAndUsage(awsCERequest);
+                if(ceResult != null && ceResult.getResultsByTime() != null && ceResult.getResultsByTime().size() > 0)
+                    ceResult.getResultsByTime().forEach(resultsByTime -> {
+                        for( Group grp:resultsByTime.getGroups())
+                        {
+                            for(String grpkey: grp.getKeys())
+                            if( grpkey.equals("eks-name$devcelgeneekscluster"))
+                                totaleksBillingData.put(k, grp.getMetrics().get("BlendedCost").getAmount());
+                            // System.out.println("AMOUNT IS_->" + grp.getMetrics().get("BlendedCost").getAmount());
+                        }
+
+
+                        System.out.println(resultsByTime.toString());
+
+                    });
+
+
+
+            } catch (final Exception e) {
+                totaleksBillingData.put(k,"0");
+                System.out.println(e);
+            }
+
+            if(totaleksBillingData.get(k) == null){
+                totaleksBillingData.put(k,"0");
+            }
+
+        }
+        return totaleksBillingData;
+
+
+    }
+
+    public Map<Integer, String>  getTotalEC2CostData()
+    {
+
+        Map<Integer, ArrayList<String>> map = new Utils().getStartAndEndMonths(1);
+        Map<Integer, String> totalec2BillingData = new HashMap<>();
+        for(int k:  map.keySet())
+        {
+
+            final GetCostAndUsageRequest awsCERequest = new GetCostAndUsageRequest()
+                    .withTimePeriod(new DateInterval().withStart(map.get(k).get(0)).withEnd(map.get(k).get(1)))
+                    .withGranularity(Granularity.MONTHLY)
+                    .withMetrics("BlendedCost", "UsageQuantity")
+                    .withFilter(new Expression().withDimensions(new DimensionValues().withKey("SERVICE")
+                            .  withValues("Amazon Elastic Compute Cloud - Compute")))
+                    .withGroupBy(new GroupDefinition().withType("TAG").withKey("alpha.eksctl.io/cluster-name"));
+
+            try {
+                AWSCostExplorer ce = AWSCostExplorerClientBuilder.standard().withCredentials(new DefaultAWSCredentialsProviderChain())
+                        //.withCredentials(new CredentialsClient().getCredentials())
+                        .build();
+
+                GetCostAndUsageResult ceResult = ce.getCostAndUsage(awsCERequest);
+                if(ceResult != null && ceResult.getResultsByTime() != null && ceResult.getResultsByTime().size() > 0)
+                ceResult.getResultsByTime().forEach(resultsByTime -> {
+                    for( Group grp:resultsByTime.getGroups())
+                    {
+                        for(String grpkey: grp.getKeys())
+                        if( grpkey.equals("alpha.eksctl.io/cluster-name$celegeneekscluster"))
+                            totalec2BillingData.put(k, grp.getMetrics().get("BlendedCost").getAmount());
+                           // System.out.println("AMOUNT IS_->" + grp.getMetrics().get("BlendedCost").getAmount());
+                    }
+
+
+                    System.out.println(resultsByTime.toString());
+
+                });
+
+
+
+            } catch (final Exception e) {
+                totalec2BillingData.put(k,"0");
+                System.out.println(e);
+            }
+
+            if(totalec2BillingData.get(k) == null){
+                 totalec2BillingData.put(k,"0");
+            }
+
+        }
+        return totalec2BillingData;
+
+
+
+    }
+
+    public Map<String,  HashMap<String, String>> getCostData()
+    {
+
+        Map<String,  HashMap<String, String>> totalcostdata = new HashMap<String,  HashMap<String, String>>();
+        Map<Integer, String> ec2Cost = getTotalEC2CostData();
+        Map<Integer, String> eksCost = getTotalEKSCostData();
+
+       Map<String, BigDecimal> usageData = resourceUsageAPI.getTenantUsageInPercentage().getAvgusageData();
+       usageData.remove("Others");
+
+        HashMap<String, String>  totalcostmap = new HashMap<String, String> ();
+        HashMap<String, String>  othercostmap = new HashMap<String, String> ();
+        totalcostdata.put("Total", totalcostmap);
+        for(String name:usageData.keySet())
+        {
+            HashMap<String, String>  tenantcostmap = new HashMap<String, String> ();
+            for(Integer k: ec2Cost.keySet())
+            {
+                BigDecimal totalCost = new BigDecimal(ec2Cost.get(k)).add( new BigDecimal(eksCost.get(k)));
+                totalcostmap.put(Utils.monthMap.get(k), String.valueOf(totalCost));
+                if(othercostmap.get(Utils.monthMap.get(k)) == null)
+                {
+                    othercostmap.put(Utils.monthMap.get(k), String.valueOf(totalCost));
+                }
+
+                    int tenantStartMonth =  Integer.valueOf(configProp.getConfigValue(name));
+
+
+
+                    if(k >= tenantStartMonth)
+                    {
+                        BigDecimal tenantCost = totalCost.multiply(usageData.get(name));
+                        tenantcostmap.put(Utils.monthMap.get(k), String.valueOf(tenantCost));
+                        if(othercostmap.get(Utils.monthMap.get(k)) != null)
+                        {
+                           BigDecimal residualCost =  new BigDecimal(othercostmap.get(Utils.monthMap.get(k))).subtract(tenantCost);
+                           othercostmap.put(Utils.monthMap.get(k), String.valueOf(residualCost));
+                        }
+                    }
+                    else
+                    {
+                        tenantcostmap.put(Utils.monthMap.get(k), "0");
+                    }
+
+                }
+                totalcostdata.put(name, tenantcostmap);
+            }
+            totalcostdata.put("Others", othercostmap);
+        return totalcostdata;
+    }
+
+    public static void CEWithGroupDefinition() {
+
+        ArrayList<Expression> list = new ArrayList<>();
+        list.add(new Expression().
+                withDimensions(new DimensionValues().withKey("SERVICE").withValues("Amazon Elastic Compute Cloud - Compute")));
+        list.add(new Expression().withTags(new TagValues().withKey("alpha.eksctl.io/cluster-name").withValues("celegeneekscluster")));
+        final GetCostAndUsageRequest awsCERequest = new GetCostAndUsageRequest()
+                .withTimePeriod(new DateInterval().withStart("2019-01-01").withEnd("2019-01-31"))
+                .withGranularity(Granularity.MONTHLY)
+                .withMetrics("BlendedCost", "UsageQuantity")
+              //  .withFilter(new Expression().withAnd(list));
+               .withFilter(new Expression().withDimensions(new DimensionValues().withKey("SERVICE")
+//                        .withValues("Amazon Elastic Container Service for Kubernetes")));
+                     .  withValues("Amazon Elastic Compute Cloud - Compute")))
+            //    .withFilter(new Expression().withTags(new TagValues().withKey("alpha.eksctl.io/cluster-name").withValues("celegeneekscluster")));
+              //.withFilter(new Expression().withTags(new TagValues().withKey("alpha.eksctl.io/cluster-name").withValues("celegeneekscluster")));
+
+
+               .withGroupBy(new GroupDefinition().withType("TAG").withKey("alpha.eksctl.io/cluster-name"));
+
+        try {
+            AWSCostExplorer ce = AWSCostExplorerClientBuilder.standard().withCredentials(new DefaultAWSCredentialsProviderChain())
+                    //.withCredentials(new CredentialsClient().getCredentials())
+                    .build();
+
+            GetCostAndUsageResult ceResult = ce.getCostAndUsage(awsCERequest);
+            ceResult.getResultsByTime().forEach(resultsByTime -> {
+
+                for( Group grpx:resultsByTime.getGroups())
+                {
+                    if( grpx.getKeys().get(0).equals("alpha.eksctl.io/cluster-name$celegeneekscluster"))
+                        System.out.println("AMOUNT IS_->" + grpx.getMetrics().get("BlendedCost").getAmount());
+                }
+
+            });
+
+        } catch (final Exception e) {
+            e.printStackTrace();
+            System.out.println(e);
+        }
+    }
+
+    private static void CEWithDimension() {
+        Expression expression = new Expression();
+        DimensionValues dimensions = new DimensionValues();
+        dimensions.withKey(Dimension.SERVICE);
+        dimensions.withValues("Amazon Route 53");
+
+        expression.withDimensions(dimensions);
+
+        final GetCostAndUsageRequest awsCERequest = new GetCostAndUsageRequest()
+                .withTimePeriod(new DateInterval().withStart("2018-07-01").withEnd("2018-07-30"))
+                .withGranularity(Granularity.DAILY)
+                .withMetrics("BlendedCost")
+                .withFilter(expression);
+
+        try {
+            AWSCostExplorer ce = AWSCostExplorerClientBuilder.standard()
+                    .withCredentials(new CredentialsClient().getCredentials())
+                    .build();
+
+            System.out.println(ce.getCostAndUsage(awsCERequest));
+
+        } catch (final Exception e) {
+            System.out.println(e);
+        }
+    }
+
+//    private static void ViewBilling() {
+//        final ViewBillingRequest awsVBRequest = new ViewBillingRequest();
+//
+//        try {
+//            AmazonRoute53Domains vb = AmazonRoute53DomainsClientBuilder.standard()
+//                    .withCredentials(new CredentialsClient().getCredentials())
+//                    .build();
+//
+//            ViewBillingResult vbResult = vb.viewBilling(awsVBRequest);
+//            System.out.println(vbResult.getBillingRecords());
+//
+//        } catch (final Exception e) {
+//            System.out.println(e);
+//        }
+//    }
+}
+
+class CredentialsClient{
+
+    CredentialsClient () {
+
+    }
+
+    public AWSStaticCredentialsProvider getCredentials() throws Exception {
+        AssumeRoleRequest assumeRole = new AssumeRoleRequest()
+                .withRoleArn("arn:aws:iam::142269675036:role/eksworkshop-admin")
+                .withRoleSessionName("cost-explorer");
+
+        AWSSecurityTokenService sts = AWSSecurityTokenServiceClientBuilder.standard().build();
+        Credentials credentials = sts.assumeRole(assumeRole).getCredentials();
+
+        BasicSessionCredentials sessionCredentials = new BasicSessionCredentials(
+                credentials.getAccessKeyId(),
+                credentials.getSecretAccessKey(),
+                credentials.getSessionToken());
+
+        return new AWSStaticCredentialsProvider(sessionCredentials);
+    }
+
+}
